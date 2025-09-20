@@ -1,4 +1,4 @@
-# **Astrbot_Plugin_VITS_pro**
+# **AstrBot_Plugin_VITS_Pro**
 
 - v1.6.0 ——  新增参考模式（同时发送语音和原文），支持调用模型本身的情绪接口（此版本相比于原插件改动较多，部分功能不稳定，故开一个新坑用于实验）
 
@@ -44,7 +44,7 @@ FunAudioLLM/CosyVoice2-0.5B模型，
 
 ## 常见问题
 - Q:为什么我的语音中有一小部分没有读出来？
-- A:因为硅基流动的tts貌似存在审核,遇到不太对劲的内容时会少读。
+- A:因为硅基流动的tts貌似存在审核，遇到不太对劲的内容时会少读。
 - Q:为什么有时开启调试模式，前面的标记只有emotion<|endofprompt|>？
 - A:因为astrbot_plugin_meme_manager会过滤掉happy等内容。因为不影响使用，所以暂时就不做修改了。
 
