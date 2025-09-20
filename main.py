@@ -10,7 +10,7 @@ import random
 import asyncio
 
 # 注册插件的装饰器
-@register("astrbot_plugin_VITS_pro", "Chris95743/第九位魔神", "语音合成插件", "1.6.0")
+@register("VIastrbot_plugin_VITS_pro", "Chris95743/第九位魔神", "语音合成插件", "1.6.0")
 class VITSPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -25,6 +25,9 @@ class VITSPlugin(Star):
         self.speed = config.get('speed', 1.0)  # 音频播放速度
         self.gain = config.get('gain', 0.0)  # 音频增益
         self.enabled = config.get('global_enabled', False)  # 从配置读取全局开关状态
+        self.reference_mode = bool(config.get('reference_mode', False))  # 参考模式：语音+原文
+        self.debug_tts_input = bool(config.get('debug_tts_input', False))  # 调试：先发出完整的TTS输入文本
+        # 不再在插件侧生成/注入TTS前缀，统一由上游人设控制
         self.max_tts_chars = int(config.get('max_tts_chars', 0))  # 超过该长度跳过TTS，0为不限制
         # 规范化基础 URL，移除多余斜杠
         if isinstance(self.api_url, str):
@@ -37,6 +40,51 @@ class VITSPlugin(Star):
         # 固定音频输出文件与并发写入锁
         self._tts_file_path = Path(__file__).parent / "miao.wav"
         self._tts_lock = asyncio.Lock()
+
+    @filter.on_llm_response()
+    async def _cache_llm_response_text(self, event: AstrMessageEvent, response):
+        """缓存原始 LLM 文本，供 TTS 使用，避免后续装饰插件改写。"""
+        try:
+            text = getattr(response, 'completion_text', '') or ''
+            if text:
+                try:
+                    event.set_extra('vits_raw_text', text)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    async def _build_tts_input(self, plain_text: str) -> str:
+        """根据配置构造发送到 TTS 的 input 文本。"""
+        # 若文本已自带以 <|endofprompt|> 结尾的指令前缀，则直接透传，避免重复添加
+        try:
+            # 仅识别标准形式：以 <|endofprompt|> 结尾的前缀
+            if re.match(r"^\s*.*?<\|endofprompt\|>\s*", plain_text, flags=re.DOTALL):
+                return plain_text
+        except Exception:
+            pass
+        # 插件不再添加前缀，直接透传
+        return plain_text
+
+    def _strip_end_marker_prefix_in_chain(self, result) -> None:
+        """若文本开头包含任意以 <|endofprompt|> 结尾的前缀，则在消息链中剔除。"""
+        try:
+            if not result or not getattr(result, 'chain', None):
+                return
+            # 仅剥离标准 <|endofprompt|> 形式，保留其他类似标记
+            pattern = re.compile(r"^.*?<\|endofprompt\|>\s*", re.DOTALL)
+            new_chain = []
+            stripped = False
+            for comp in result.chain:
+                if not stripped and isinstance(comp, Plain):
+                    new_text = pattern.sub('', comp.text)
+                    new_chain.append(Plain(new_text))
+                    stripped = True
+                else:
+                    new_chain.append(comp)
+            result.chain = new_chain
+        except Exception:
+            pass
 
     def _get_system_voices_dict(self):
         """预置系统音色，统一管理，保持插入顺序"""
@@ -476,13 +524,13 @@ class VITSPlugin(Star):
         info_text += "说明：状态显示当前运行状态，全局开关配置显示重启后的默认状态"
         yield event.plain_result(info_text)
 
-    async def _create_speech_request(self, plain_text: str, output_audio_path: Path):
+    async def _create_speech_request(self, tts_input_text: str, output_audio_path: Path):
         """创建语音合成请求"""
         try:
             # 构建请求数据
             request_data = {
                 "model": self.api_name,
-                "input": plain_text,
+                "input": tts_input_text,
                 "response_format": "wav"
             }
             
@@ -584,8 +632,8 @@ class VITSPlugin(Star):
             if isinstance(comp, (Image, At, AtAll, Reply)):
                 return  # 静默退出，不添加错误提示
             if isinstance(comp, Plain):
-                cleaned_text = re.sub(r'[()《》#%^&*+-_{}]', '', comp.text)
-                plain_text += cleaned_text
+                # 不再过滤字符，保持文本原样，避免误删 TTS 控制标记
+                plain_text += comp.text
 
         # 清理首尾空白并校验是否为空
         plain_text = plain_text.strip()
@@ -598,6 +646,8 @@ class VITSPlugin(Star):
 
         # 检查是否应该跳过TTS
         if await self._should_skip_tts(plain_text):
+            # 若文本前部包含以 <|endofprompt|> 结尾的提示前缀，剔除后再以文字发送
+            self._strip_end_marker_prefix_in_chain(result)
             return
 
         # 固定输出文件路径，使用临时文件+原子替换并加锁避免并发冲突
@@ -606,15 +656,61 @@ class VITSPlugin(Star):
 
         try:
             async with self._tts_lock:
-                success = await self._create_speech_request(plain_text, tmp_audio_path)
-                if success:
-                    # 原子替换到最终文件
-                    tmp_audio_path.replace(final_audio_path)
-                    result.chain = [Record(file=str(final_audio_path))]
+                # 构造用于TTS的输入文本（保留可能的人设前缀）
+                # 优先使用 on_llm_response 缓存的原始文本，避免被其他插件改写
+                src_text = plain_text
+                try:
+                    cached = event.get_extra('vits_raw_text')
+                    if isinstance(cached, str) and cached.strip():
+                        src_text = cached
+                except Exception:
+                    pass
+                tts_input = await self._build_tts_input(src_text)
+                # 调试：先发送完整的TTS输入文本
+                if self.debug_tts_input:
                     try:
-                        event.set_extra('vits_sent', True)
+                        preview_text = tts_input
+                        # 展示时可限制长度以免过长
+                        if len(preview_text) > 4000:
+                            preview_text = preview_text[:4000] + "..."
+                        result.chain = [Plain(preview_text)]
                     except Exception:
                         pass
+                success = await self._create_speech_request(tts_input, tmp_audio_path)
+            if success:
+                # 原子替换到最终文件
+                tmp_audio_path.replace(final_audio_path)
+                if self.reference_mode or self.debug_tts_input:
+                    # 参考模式：语音 + 原文本（剔除可能存在的前缀）
+                    # 复制原文本
+                    original_text = ''
+                    try:
+                        text_builder = []
+                        for comp in result.chain:
+                            if isinstance(comp, Plain):
+                                text_builder.append(comp.text)
+                        original_text = '\n'.join([t for t in text_builder if t]).strip()
+                    except Exception:
+                        original_text = ''
+                    # 剔除前缀
+                    try:
+                        if original_text:
+                            # 仅匹配标准形式：<|endofprompt|> 后的文本
+                            original_text = re.sub(r"^.*?<\|endofprompt\|>\s*", '', original_text, flags=re.DOTALL)
+                    except Exception:
+                        pass
+                    # 组合为：语音 + 文本
+                    new_chain = [Record(file=str(final_audio_path))]
+                    if original_text:
+                        new_chain.append(Plain(original_text))
+                    result.chain = new_chain
+                else:
+                    # 仅发送语音
+                    result.chain = [Record(file=str(final_audio_path))]
+                try:
+                    event.set_extra('vits_sent', True)
+                except Exception:
+                    pass
         except Exception as e:
             logging.error(f"语音转换失败: {e}")
             chain.append(Plain(f"语音转换失败：{str(e)}"))
