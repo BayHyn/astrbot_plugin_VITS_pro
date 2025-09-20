@@ -1,8 +1,8 @@
 from astrbot.api.event import filter, AstrMessageEvent
-from astrbot.api.star import Context, Star, register
+from astrbot.api.star import Context, Star, register, StarTools
+from astrbot.api import logger
 from astrbot.api.message_components import Record, Plain, Image, At, Reply, AtAll
 from pathlib import Path
-import logging
 import re
 import aiohttp
 import json
@@ -10,7 +10,7 @@ import random
 import asyncio
 
 # 注册插件的装饰器
-@register("VIastrbot_plugin_VITS_pro", "Chris95743/第九位魔神", "语音合成插件", "1.6.0")
+@register("VITSPlugin", "第九位魔神/Chris95743", "语音合成插件", "1.6.0")
 class VITSPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -37,8 +37,17 @@ class VITSPlugin(Star):
         # 简易去重缓存，避免同一会话短时间内重复合成
         self._recent_tts = {}
         self._dedup_ttl_seconds = 10
-        # 固定音频输出文件与并发写入锁
-        self._tts_file_path = Path(__file__).parent / "miao.wav"
+        # 使用插件数据目录存放输出音频，避免污染源代码目录
+        try:
+            self.plugin_data_dir = StarTools.get_data_dir("astrbot_plugin_vits")
+        except Exception:
+            # 兜底：仍然使用源目录，但仅作为读取，不建议写入
+            self.plugin_data_dir = Path(__file__).parent
+        try:
+            Path(self.plugin_data_dir).mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        self._tts_file_path = Path(self.plugin_data_dir) / "miao.wav"
         self._tts_lock = asyncio.Lock()
 
     @filter.on_llm_response()
@@ -104,36 +113,16 @@ class VITSPlugin(Star):
         try:
             # 更新内存中的配置
             self.config['global_enabled'] = enabled
-            
             if hasattr(self.context, 'save_config'):
                 self.context.save_config(self.config)
+                logger.info(f"已保存TTS全局开关状态: {enabled}")
             elif hasattr(self.context, 'update_config'):
                 self.context.update_config('global_enabled', enabled)
+                logger.info(f"已保存TTS全局开关状态: {enabled}")
             else:
-                # 如果context没有提供保存方法，我们尝试直接写入配置文件
-                config_dir = Path(__file__).parent
-                config_file = config_dir / "config.json"
-                
-                # 读取现有配置
-                existing_config = {}
-                if config_file.exists():
-                    try:
-                        with open(config_file, 'r', encoding='utf-8') as f:
-                            existing_config = json.load(f)
-                    except:
-                        pass
-                
-                # 更新配置
-                existing_config['global_enabled'] = enabled
-                
-                # 写入配置文件
-                with open(config_file, 'w', encoding='utf-8') as f:
-                    json.dump(existing_config, f, ensure_ascii=False, indent=2)
-                    
-                logging.info(f"已保存TTS全局开关状态: {enabled}")
-                
+                logger.warning("context 未提供保存配置的方法，'global_enabled' 状态变更不会持久化。")
         except Exception as e:
-            logging.error(f"保存TTS开关状态失败: {e}")
+            logger.error(f"保存TTS开关状态失败: {e}")
 
     def _normalize_skip_keywords(self, keywords):
         """将 skip 关键词规范化为去空格小写列表；若为空，使用内置默认"""
@@ -180,24 +169,14 @@ class VITSPlugin(Star):
             self.config[key] = value
             if hasattr(self.context, 'save_config'):
                 self.context.save_config(self.config)
+                logger.info(f"已保存配置项 {key} = {value}")
             elif hasattr(self.context, 'update_config'):
                 self.context.update_config(key, value)
+                logger.info(f"已保存配置项 {key} = {value}")
             else:
-                config_dir = Path(__file__).parent
-                config_file = config_dir / "config.json"
-                existing_config = {}
-                if config_file.exists():
-                    try:
-                        with open(config_file, 'r', encoding='utf-8') as f:
-                            existing_config = json.load(f)
-                    except Exception:
-                        pass
-                existing_config[key] = value
-                with open(config_file, 'w', encoding='utf-8') as f:
-                    json.dump(existing_config, f, ensure_ascii=False, indent=2)
-            logging.info(f"已保存配置项 {key} = {value}")
+                logger.warning(f"context 未提供保存配置的方法，配置项 {key} 的变更不会持久化。")
         except Exception as e:
-            logging.error(f"保存配置项失败 {key}: {e}")
+            logger.error(f"保存配置项失败 {key}: {e}")
 
     @filter.command("vits", priority=1)
     async def vits(self, event: AstrMessageEvent):
@@ -254,7 +233,7 @@ class VITSPlugin(Star):
                                 custom_voices = voice_list
                                 
             except Exception as e:
-                logging.warning(f"获取自定义音色列表失败: {e}")
+                logger.warning(f"获取自定义音色列表失败: {e}")
             
             # 构建音色信息
             voice_info = "可用音色列表\n"
@@ -292,7 +271,7 @@ class VITSPlugin(Star):
             yield event.plain_result(voice_info)
             
         except Exception as e:
-            logging.error(f"获取音色列表失败: {e}")
+            logger.error(f"获取音色列表失败: {e}")
             yield event.plain_result(f"获取音色列表失败：{str(e)}")
 
     @filter.command("voice", priority=1)
@@ -363,7 +342,7 @@ class VITSPlugin(Star):
                                 if voice_name_key and voice_uri:
                                     custom_voices[voice_name_key] = voice_uri
         except Exception as e:
-            logging.warning(f"获取自定义音色列表失败: {e}")
+            logger.warning(f"获取自定义音色列表失败: {e}")
         
         # 检查是否是系统预置音色
         if voice_name_lower in system_voices:
@@ -566,7 +545,7 @@ class VITSPlugin(Star):
                         raise Exception(f"API请求失败，状态码: {response.status}, 错误信息: {error_text}")
                 
         except Exception as e:
-            logging.error(f"语音转换失败: {e}")
+            logger.error(f"语音转换失败: {e}")
             raise e
 
     async def _should_skip_tts(self, text: str) -> bool:
@@ -712,7 +691,7 @@ class VITSPlugin(Star):
                 except Exception:
                     pass
         except Exception as e:
-            logging.error(f"语音转换失败: {e}")
+            logger.error(f"语音转换失败: {e}")
             chain.append(Plain(f"语音转换失败：{str(e)}"))
 
     @filter.on_decorating_result()
