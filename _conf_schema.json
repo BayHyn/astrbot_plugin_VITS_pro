@@ -1,0 +1,72 @@
+{
+    "url": {
+        "description": "API URL",
+        "type": "string",
+        "hint": "请输入API的URL地址",
+        "default": "https://api.siliconflow.cn/v1"
+    },
+    "apikey": {
+        "description": "API Key",
+        "type": "string",
+        "hint": "请输入API的密钥"
+    },
+    "name": {
+        "description": "模型名称",
+        "type": "string",
+        "hint": "请输入模型的名称，如：FunAudioLLM/CosyVoice2-0.5B",
+        "default": "FunAudioLLM/CosyVoice2-0.5B"
+    },
+    "voice": {
+        "description": "音色配置",
+        "type": "string",
+        "hint": "系统预置音色：模型名:音色名（如：FunAudioLLM/CosyVoice2-0.5B:alex）；自定义音色：speech:音色名:ID:哈希值"
+    },
+    "skip_tts_keywords": {
+        "description": "跳过TTS的关键词列表",
+        "type": "list",
+        "hint": "当回复包含这些关键词时，将跳过语音转换，直接回复文字（不区分大小写）",
+        "default": ["astrbot", "llm", "http", "www.", ".com", "reset", ".cn", "链接", "网址", "入群", "退群", "涩图", "语音", "音色", "错误类型", "tts", "转换", "新对话", "服务提供商", "列表"]
+    },
+    "tts_probability": {
+        "description": "TTS转换概率",
+        "type": "int",
+        "hint": "设置语音转换的概率，范围0-100。100表示每次都转换，50表示50%概率转换，0表示从不转换",
+        "default": 100
+    },
+    "speed": {
+        "description": "音频播放速度",
+        "type": "float",
+        "hint": "控制音频播放速度，float类型，默认值是1.0，可选范围是[0.25,4.0]",
+        "default": 1.0
+    },
+    "gain": {
+        "description": "音频增益",
+        "type": "float",
+        "hint": "音频增益，单位dB，控制音频声音大小，float类型，默认值是0.0，可选范围是[-10,10]",
+        "default": 0.0
+    },
+    "max_tts_chars": {
+        "description": "TTS 最大字符数",
+        "type": "int",
+        "hint": "当文本长度超过该值时，将跳过TTS转换。设置0或负数表示不限制。",
+        "default": 0
+    },
+    "global_enabled": {
+        "description": "全局TTS状态保存",
+        "type": "bool",
+        "hint": "控制TTS功能的全局开关状态，开启后则不会因为重启框架或重载插件而改变TTS功能开关状态",
+        "default": true
+    },
+    "reference_mode": {
+        "description": "参考模式（语音 + 原文本）",
+        "type": "bool",
+        "hint": "开启后，触发TTS时会先发送语音，再附上原文本内容",
+        "default": false
+    },
+    "debug_tts_input": {
+        "description": "调试：显示发送到TTS的完整文本",
+        "type": "bool",
+        "hint": "开启后，将先发送语音，再发送用于TTS的完整文本",
+        "default": false
+    }
+}
