@@ -2,7 +2,7 @@
 
 - v1.6.0 ——  新增参考模式（同时发送语音和原文），支持调用模型本身的情绪接口（此版本相比于原插件改动较多，部分功能不稳定，故开一个新坑用于实验）
 
-默认不启动情绪,如果你需要调用情绪，请在你的角色人设中加入以下内容。
+默认不启动情绪,如果你需要调用情绪，请在你的角色人设中加入以下内容：
 
 在你回复开始前，你必须表明你这次回复时的情绪，包括以下几种情绪：快乐（happy）、兴奋（excited）、悲伤（sad）、愤怒（angry），不存在的情绪禁止新创。
 你回复的具体格式为：happy emotion<|endofprompt|>/excited emotion<|endofprompt|>/sad emotion<|endofprompt|>/angry emotion<|endofprompt|>你回复的正文
