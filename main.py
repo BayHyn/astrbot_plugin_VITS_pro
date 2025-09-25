@@ -24,7 +24,7 @@ class VITSPlugin(Star):
         self.tts_probability = config.get('tts_probability', 100)  # TTS转换概率
         self.speed = config.get('speed', 1.0)  # 音频播放速度
         self.gain = config.get('gain', 0.0)  # 音频增益
-        self.enabled = config.get('global_enabled', False)  # 从配置读取全局开关状态
+        self.enabled = config.get('global_enabled', True)  # 从配置读取全局开关状态（与schema默认一致）
         self.reference_mode = bool(config.get('reference_mode', False))  # 参考模式：语音+原文
         self.debug_tts_input = bool(config.get('debug_tts_input', False))  # 调试：先发出完整的TTS输入文本
         # 不再在插件侧生成/注入TTS前缀，统一由上游人设控制
@@ -493,7 +493,7 @@ class VITSPlugin(Star):
         """查看插件当前配置信息"""
         info_text = f"VITS插件配置信息：\n"
         info_text += f"状态：{'启用' if self.enabled else '禁用'}\n"
-        info_text += f"全局开关配置：{'启用' if self.config.get('global_enabled', False) else '禁用'}\n"
+        info_text += f"全局开关配置：{'启用' if self.config.get('global_enabled', True) else '禁用'}\n"
         info_text += f"音色：{self.api_voice}\n"
         info_text += f"播放速度：{self.speed}\n"
         info_text += f"音频增益：{self.gain}dB\n"
@@ -698,11 +698,17 @@ class VITSPlugin(Star):
     async def on_decorating_result(self, event: AstrMessageEvent):
         # 插件是否启用
         if not self.enabled:
+            # 在停用语音时仍然清理可见文本中以 <|endofprompt|> 结尾的前缀
+            try:
+                result = event.get_result()
+                if result is not None:
+                    self._strip_end_marker_prefix_in_chain(result)
+            except Exception:
+                pass
             return
         # 去重：同一事件只处理一次
         try:
             if event.get_extra('vits_processed'):
-                # 如果已经发送过，清理结果，避免再次发送
                 if event.get_extra('vits_sent'):
                     event.clear_result()
                 return
