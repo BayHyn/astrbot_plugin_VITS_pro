@@ -27,6 +27,9 @@ class VITSPlugin(Star):
         self.enabled = config.get('global_enabled', True)  # 从配置读取全局开关状态（与schema默认一致）
         self.reference_mode = bool(config.get('reference_mode', False))  # 参考模式：语音+原文
         self.debug_tts_input = bool(config.get('debug_tts_input', False))  # 调试：先发出完整的TTS输入文本
+        # 访问控制：模式 + 列表
+        self.group_access_mode = self._normalize_access_mode(config.get('group_access_mode', 'disabled'))
+        self.group_access_list = config.get('group_access_list', [])
         # 不再在插件侧生成/注入TTS前缀，统一由上游人设控制
         self.max_tts_chars = int(config.get('max_tts_chars', 0))  # 超过该长度跳过TTS，0为不限制
         # 规范化基础 URL，移除多余斜杠
@@ -177,6 +180,30 @@ class VITSPlugin(Star):
                 logger.warning(f"context 未提供保存配置的方法，配置项 {key} 的变更不会持久化。")
         except Exception as e:
             logger.error(f"保存配置项失败 {key}: {e}")
+
+    def _normalize_access_mode(self, value) -> str:
+        """将配置中的访问模式归一化为内部标识：disabled/whitelist/blacklist。
+        同时兼容中文选项：不限制/白名单/黑名单。
+        """
+        try:
+            text = str(value).strip().lower()
+        except Exception:
+            return 'disabled'
+        mapping = {
+            'disabled': 'disabled',
+            'whitelist': 'whitelist',
+            'blacklist': 'blacklist',
+            '不限制': 'disabled',
+            '白名单': 'whitelist',
+            '黑名单': 'blacklist',
+        }
+        # 直接命中英文
+        if text in mapping:
+            return mapping[text]
+        # 中文原样匹配（lower 对中文无影响）
+        if value in mapping:
+            return mapping[value]
+        return 'disabled'
 
     @filter.command("vits", priority=1)
     async def vits(self, event: AstrMessageEvent):
@@ -706,7 +733,34 @@ class VITSPlugin(Star):
             except Exception:
                 pass
             return
-        # 去重：同一事件只处理一次
+
+        # 会话访问控制：disabled/whitelist/blacklist
+        try:
+            mode = (self.group_access_mode or 'disabled').lower()
+            if mode not in ['disabled', 'whitelist', 'blacklist']:
+                mode = 'disabled'
+            acl = {str(x).strip() for x in (self.group_access_list or []) if str(x).strip() != ''}
+            group_id = event.get_group_id() if hasattr(event, 'get_group_id') else None
+            sender_id = event.get_sender_id() if hasattr(event, 'get_sender_id') else None
+            ctx_id = str(group_id).strip() if group_id else (str(sender_id).strip() if sender_id else '')
+
+            if mode == 'whitelist':
+                # 仅名单内启用
+                if ctx_id == '' or ctx_id not in acl:
+                    result = event.get_result()
+                    if result is not None:
+                        self._strip_end_marker_prefix_in_chain(result)
+                    return
+            elif mode == 'blacklist':
+                # 名单内禁用
+                if ctx_id != '' and ctx_id in acl:
+                    result = event.get_result()
+                    if result is not None:
+                        self._strip_end_marker_prefix_in_chain(result)
+                    return
+        except Exception:
+            # 任何异常都不应阻断正常流程
+            pass
         try:
             if event.get_extra('vits_processed'):
                 if event.get_extra('vits_sent'):
