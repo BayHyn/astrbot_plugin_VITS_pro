@@ -21,11 +21,24 @@
         "type": "string",
         "hint": "系统预置音色：模型名:音色名（如：FunAudioLLM/CosyVoice2-0.5B:alex）；自定义音色：speech:音色名:ID:哈希值"
     },
+    "group_access_mode": {
+        "description": "会话访问控制模式",
+        "type": "string",
+        "options": ["不限制", "白名单", "黑名单"],
+        "hint": "不限制=不限制；白名单=仅名单内启用；黑名单=名单内禁用",
+        "default": "不限制"
+    },
+    "group_access_list": {
+        "description": "会话访问控制列表（群号或QQ号）",
+        "type": "list",
+        "hint": "与上面的模式配合使用；填群号或QQ号；示例：[\"1234567890\"]",
+        "default": []
+    },
     "skip_tts_keywords": {
         "description": "跳过TTS的关键词列表",
         "type": "list",
         "hint": "当回复包含这些关键词时，将跳过语音转换，直接回复文字（不区分大小写）",
-        "default": ["astrbot", "llm", "http", "www.", ".com", "reset", ".cn", "链接", "网址", "入群", "退群", "涩图", "语音", "音色", "错误类型", "tts", "转换", "新对话", "服务提供商", "列表"]
+        "default": ["astrbot", "llm", "http", "www.", ".com", "reset", ".cn", "链接", "网址", "入群", "退群", "图片", "涩图", "语音", "音色", "错误类型", "tts", "转换", "新对话", "服务提供商", "列表"]
     },
     "tts_probability": {
         "description": "TTS转换概率",
