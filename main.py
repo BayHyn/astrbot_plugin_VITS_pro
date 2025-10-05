@@ -10,7 +10,7 @@ import random
 import asyncio
 
 # 注册插件的装饰器
-@register("astrbot_plugin_VITS_pro", "Chris95743/第九位魔神", "语音合成插件", "1.6.0")
+@register("astrbot_plugin_VITS_pro", "Chris95743/第九位魔神", "语音合成插件", "1.7.0")
 class VITSPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
