@@ -40,6 +40,12 @@
         "hint": "当回复包含这些关键词时，将跳过语音转换，直接回复文字（不区分大小写）",
         "default": ["astrbot", "llm", "http", "www.", ".com", "reset", ".cn", "链接", "网址", "入群", "退群", "图片", "涩图", "语音", "音色", "错误类型", "tts", "转换", "新对话", "服务提供商", "列表"]
     },
+    "only_llm_tts": {
+        "description": "仅对AI模型回复进行TTS",
+        "type": "bool",
+        "hint": "开启后，只对由大模型生成的回复进行语音合成；插件或人工触发的非LLM文本将不做TTS",
+        "default": true
+    },
     "tts_probability": {
         "description": "TTS转换概率",
         "type": "int",
@@ -79,7 +85,7 @@
     "debug_tts_input": {
         "description": "调试：显示发送到TTS的完整文本",
         "type": "bool",
-        "hint": "开启后，将先发送语音，再发送用于TTS的完整文本",
+        "hint": "开启后，将先发送语音，再发送用于TTS的完整文本,非必要不开启。",
         "default": false
     }
 }
