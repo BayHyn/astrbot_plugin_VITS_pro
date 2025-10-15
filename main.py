@@ -27,10 +27,10 @@ class VITSPlugin(Star):
         self.enabled = config.get('global_enabled', True)  # 从配置读取全局开关状态（与schema默认一致）
         self.reference_mode = bool(config.get('reference_mode', False))  # 参考模式：语音+原文
         self.debug_tts_input = bool(config.get('debug_tts_input', False))  # 调试：先发出完整的TTS输入文本
+        self.only_llm_tts = bool(config.get('only_llm_tts', False))  # 仅对AI模型回复进行TTS
         # 访问控制：模式 + 列表
         self.group_access_mode = self._normalize_access_mode(config.get('group_access_mode', 'disabled'))
         self.group_access_list = config.get('group_access_list', [])
-        # 不再在插件侧生成/注入TTS前缀，统一由上游人设控制
         self.max_tts_chars = int(config.get('max_tts_chars', 0))  # 超过该长度跳过TTS，0为不限制
         # 规范化基础 URL，移除多余斜杠
         if isinstance(self.api_url, str):
@@ -61,6 +61,7 @@ class VITSPlugin(Star):
             if text:
                 try:
                     event.set_extra('vits_raw_text', text)
+                    event.set_extra('vits_has_llm', True)
                 except Exception:
                     pass
         except Exception:
@@ -225,6 +226,26 @@ class VITSPlugin(Star):
             yield event.plain_result(f"启用语音插件, {user_name} (已保存到配置)")
         else:
             yield event.plain_result(f"禁用语音插件, {user_name} (已保存到配置)")
+
+    @filter.command("vitsre", priority=1)
+    async def vits_restart(self, event: AstrMessageEvent):
+        """重启语音插件：相当于执行两次 /vits（切换→再切换回）"""
+        # 记录原始状态
+        original_enabled = self.enabled
+        # 第一次切换
+        self.enabled = not original_enabled
+        self._save_global_enabled_state(self.enabled)
+        # 稍作等待，确保外部观察者有机会感知变更（可选）
+        try:
+            await asyncio.sleep(0.1)
+        except Exception:
+            pass
+        # 第二次切换，恢复到原状态
+        self.enabled = original_enabled
+        self._save_global_enabled_state(self.enabled)
+        yield event.plain_result(
+            f"已重启语音插件，当前状态：{'启用' if self.enabled else '禁用'}（配置已同步）"
+        )
 
     @filter.command("voices", priority=1)
     async def vits_voices(self, event: AstrMessageEvent):
@@ -526,7 +547,8 @@ class VITSPlugin(Star):
         info_text += f"音频增益：{self.gain}dB\n"
         info_text += f"转换概率：{self.tts_probability}%\n"
         info_text += f"最大TTS字符：{self.max_tts_chars if self.max_tts_chars > 0 else '不限制'}\n"
-        info_text += f"跳过关键词：{', '.join(self.skip_tts_keywords)}\n\n"
+        info_text += f"跳过关键词：{', '.join(self.skip_tts_keywords)}\n"
+        info_text += f"仅对AI模型TTS：{'开启' if self.only_llm_tts else '关闭'}\n\n"
         info_text += "说明：状态显示当前运行状态，全局开关配置显示重启后的默认状态"
         yield event.plain_result(info_text)
 
@@ -774,6 +796,13 @@ class VITSPlugin(Star):
         result = event.get_result()
         if result is None:
             return
+        # 若启用仅LLM TTS，则没有 LLM 文本的消息不做语音
+        try:
+            if self.only_llm_tts and not event.get_extra('vits_has_llm'):
+                self._strip_end_marker_prefix_in_chain(result)
+                return
+        except Exception:
+            pass
         # 传递会话键，用于去重
         session_key = getattr(event, 'unified_msg_origin', None) or event.get_session_id()
         await self._convert_to_speech(event, result, session_key)
