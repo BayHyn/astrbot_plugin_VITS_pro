@@ -4,7 +4,7 @@
 > 新增：降低了插件优先度，避免和其他插件在装饰阶段冲突。
 
 <p align="left">
-  <img src="https://img.shields.io/badge/version-v1.7.0-blue.svg" />
+  <img src="https://img.shields.io/badge/version-v1.8.0-blue.svg" />
   <img src="https://img.shields.io/badge/status-experimental-orange.svg" />
   <img src="https://img.shields.io/badge/feature-TTS%20增强-success.svg" />
   <img src="https://img.shields.io/badge/API-硅基流动-lightgrey.svg" />
