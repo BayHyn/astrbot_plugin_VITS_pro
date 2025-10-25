@@ -87,5 +87,11 @@
         "type": "bool",
         "hint": "开启后，将先发送语音，再发送用于TTS的完整文本,非必要不开启。",
         "default": false
+    },
+    "max_saved_audios": {
+        "description": "最大保存音频数量（0=不限制）",
+        "type": "int",
+        "hint": "保存到 data/astrbot_plugin_vits/tts/ 的 .wav 文件数量上限。超过后自动删除最早的。设置为 0 表示不限制。",
+        "default": 5
     }
 }
