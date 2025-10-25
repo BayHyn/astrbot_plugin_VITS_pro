@@ -1,7 +1,7 @@
 # AstrBot Plugin VITS Pro
 
-> 实验性增强版 · 当前版本：**v1.7.0**  
-> 新增：TTS 黑 / 白名单，可更灵活控制不同会话的语音合成状态。
+> 实验性增强版 · 当前版本：**v1.8.0**  
+> 新增：降低了插件优先度，避免和其他插件在装饰阶段冲突。
 
 <p align="left">
   <img src="https://img.shields.io/badge/version-v1.7.0-blue.svg" />
@@ -57,6 +57,8 @@ angry emotion<|endofprompt|>哇！你这个变态真是无药可救了！
 ### 2. 带 “@” 和“回复” 的消息会吞语音  
 请关闭相关自动行为  
 ![@和回复吞语音说明](img_2.png)
+
+### 3. 可以正常开启分段回复 
 
 ---
 
