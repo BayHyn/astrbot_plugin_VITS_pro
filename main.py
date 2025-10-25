@@ -8,6 +8,11 @@ import aiohttp
 import json
 import random
 import asyncio
+import os
+import uuid
+import time
+import hashlib
+from datetime import datetime
 
 # 注册插件的装饰器
 @register("astrbot_plugin_VITS_pro", "Chris95743/第九位魔神", "语音合成插件", "1.7.0")
@@ -28,6 +33,8 @@ class VITSPlugin(Star):
         self.reference_mode = bool(config.get('reference_mode', False))  # 参考模式：语音+原文
         self.debug_tts_input = bool(config.get('debug_tts_input', False))  # 调试：先发出完整的TTS输入文本
         self.only_llm_tts = bool(config.get('only_llm_tts', False))  # 仅对AI模型回复进行TTS
+        # 新增：最大保存音频文件数量（0=不限制）
+        self.max_saved_audios = int(config.get('max_saved_audios', 5))
         # 访问控制：模式 + 列表
         self.group_access_mode = self._normalize_access_mode(config.get('group_access_mode', 'disabled'))
         self.group_access_list = config.get('group_access_list', [])
@@ -50,8 +57,18 @@ class VITSPlugin(Star):
             Path(self.plugin_data_dir).mkdir(parents=True, exist_ok=True)
         except Exception:
             pass
-        self._tts_file_path = Path(self.plugin_data_dir) / "miao.wav"
+        # 使用专用输出目录保存每次合成的音频，文件名带时间戳，避免覆盖与缓存
+        self._tts_output_dir = Path(self.plugin_data_dir) / "tts"
+        try:
+            self._tts_output_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
         self._tts_lock = asyncio.Lock()
+        # 启动时清理历史文件，保证重载后策略仍然生效
+        try:
+            self._enforce_audio_retention()
+        except Exception:
+            pass
 
     @filter.on_llm_response()
     async def _cache_llm_response_text(self, event: AstrMessageEvent, response):
@@ -181,6 +198,43 @@ class VITSPlugin(Star):
                 logger.warning(f"context 未提供保存配置的方法，配置项 {key} 的变更不会持久化。")
         except Exception as e:
             logger.error(f"保存配置项失败 {key}: {e}")
+
+    def _generate_unique_audio_paths(self):
+        """生成本次合成专用的唯一文件路径（时间戳 + uuid）。"""
+        try:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        except Exception:
+            ts = str(int(time.time() * 1000))
+        uid = uuid.uuid4().hex[:8]
+        base = f"{ts}_{uid}"
+        final_audio_path = (self._tts_output_dir / f"{base}.wav").resolve()
+        tmp_audio_path = (self._tts_output_dir / f"{base}.tmp").resolve()
+        return final_audio_path, tmp_audio_path
+
+    def _enforce_audio_retention(self):
+        """按配置最大数量保留音频文件；超过上限删除最早的，同时顺带清理残留的 .tmp。"""
+        try:
+            out_dir = getattr(self, '_tts_output_dir', None)
+            if not out_dir or not Path(out_dir).exists():
+                return
+            # 仅管理正式的 .wav 文件
+            wav_files = sorted(Path(out_dir).glob('*.wav'), key=lambda p: (p.stat().st_mtime, p.name))
+            if isinstance(self.max_saved_audios, int) and self.max_saved_audios > 0:
+                excess = len(wav_files) - self.max_saved_audios
+                if excess > 0:
+                    for p in wav_files[:excess]:
+                        try:
+                            p.unlink()
+                        except Exception:
+                            pass
+            # 清理残留临时文件
+            for tmp in Path(out_dir).glob('*.tmp'):
+                try:
+                    tmp.unlink()
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"清理历史音频失败: {e}")
 
     def _normalize_access_mode(self, value) -> str:
         """将配置中的访问模式归一化为内部标识：disabled/whitelist/blacklist。
@@ -631,7 +685,12 @@ class VITSPlugin(Star):
                 for k in to_delete:
                     self._recent_tts.pop(k, None)
 
-            key = f"{session_key}:{hash(text)}"
+            # 使用稳定哈希降低碰撞概率
+            try:
+                digest = hashlib.sha1(text.encode('utf-8')).hexdigest()
+            except Exception:
+                digest = str(hash(text))
+            key = f"{session_key}:{digest}"
             ts = self._recent_tts.get(key)
             if ts and (now - ts) <= self._dedup_ttl_seconds:
                 return True
@@ -678,9 +737,8 @@ class VITSPlugin(Star):
             self._strip_end_marker_prefix_in_chain(result)
             return
 
-        # 固定输出文件路径，使用临时文件+原子替换并加锁避免并发冲突
-        final_audio_path = self._tts_file_path
-        tmp_audio_path = final_audio_path.with_suffix('.tmp.wav')
+        # 为本次请求生成唯一输出文件，使用临时文件 + 原子替换，并加锁避免并发冲突
+        final_audio_path, tmp_audio_path = self._generate_unique_audio_paths()
 
         try:
             async with self._tts_lock:
@@ -706,8 +764,19 @@ class VITSPlugin(Star):
                         pass
                 success = await self._create_speech_request(tts_input, tmp_audio_path)
             if success:
-                # 原子替换到最终文件
-                tmp_audio_path.replace(final_audio_path)
+                # 原子替换到最终文件（尽量同卷内替换，失败则回退为复制）
+                try:
+                    os.replace(tmp_audio_path, final_audio_path)
+                except Exception:
+                    try:
+                        data = Path(tmp_audio_path).read_bytes()
+                        Path(final_audio_path).write_bytes(data)
+                        try:
+                            os.remove(tmp_audio_path)
+                        except Exception:
+                            pass
+                    except Exception:
+                        raise
                 if self.reference_mode or self.debug_tts_input:
                     # 参考模式：语音 + 原文本（剔除可能存在的前缀）
                     # 复制原文本
@@ -739,11 +808,41 @@ class VITSPlugin(Star):
                     event.set_extra('vits_sent', True)
                 except Exception:
                     pass
+                # 成功后执行一次目录清理，重载不影响
+                try:
+                    self._enforce_audio_retention()
+                except Exception:
+                    pass
         except Exception as e:
             logger.error(f"语音转换失败: {e}")
             chain.append(Plain(f"语音转换失败：{str(e)}"))
 
-    @filter.on_decorating_result()
+    @filter.command("ttsmax", priority=1)
+    async def set_max_saved_audios_cmd(self, event: AstrMessageEvent):
+        """设置最大保存音频文件数量（0=不限制）。用法：/ttsmax <数量>。"""
+        msg = event.get_message_str().strip()
+        parts = msg.split()
+        if len(parts) < 2:
+            yield event.plain_result(
+                f"当前最大保存音频数量：{self.max_saved_audios}（0=不限制）\n用法：/ttsmax 200"
+            )
+            return
+        try:
+            val = int(parts[1])
+            if val < 0 or val > 10000:
+                yield event.plain_result("数量需在 0~10000 之间（0=不限制）")
+                return
+            self.max_saved_audios = val
+            self._save_config_field('max_saved_audios', val)
+            try:
+                self._enforce_audio_retention()
+            except Exception:
+                pass
+            yield event.plain_result(f"已设置最大保存音频数量为：{val}（0=不限制）")
+        except ValueError:
+            yield event.plain_result("请输入有效数字，例如：/ttsmax 200")
+
+    @filter.on_decorating_result(priority=-100)
     async def on_decorating_result(self, event: AstrMessageEvent):
         # 插件是否启用
         if not self.enabled:
